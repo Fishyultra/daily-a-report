@@ -9,27 +9,25 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 from docx import Document
 
-# ==================== 配置 ====================
 TOKEN = os.environ.get("PUSHPLUS_TOKEN", "")
 REPO = os.environ.get("GITHUB_REPOSITORY", "")
 TOPIC = os.environ.get("PUSHPLUS_TOPIC", "")
 DATA_DIR = "data"
 OUTPUT_DIR = "output"
 
-# ==================== 工具函数 ====================
+
 def get_latest_file(exts):
-    """抓取 data/ 目录下指定扩展名的最新文件"""
     files = []
     for ext in exts:
-        pattern = os.path.join(DATA_DIR, "*." + ext)
+        pattern = DATA_DIR + "/*." + ext
         matched = glob.glob(pattern)
         files.extend(matched)
     if not files:
         return None
     return max(files, key=os.path.getmtime)
 
+
 def read_text(path):
-    """读取文字描述，支持 txt/md/docx"""
     if not path or not os.path.exists(path):
         return "今日无文字描述。"
     if path.endswith(".docx"):
@@ -39,8 +37,8 @@ def read_text(path):
     with open(path, "r", encoding="utf-8") as f:
         return f.read().strip()
 
+
 def generate_charts(excel_path):
-    """为Excel每个Sheet生成一张图，标题即Sheet名"""
     date_str = datetime.now().strftime("%Y-%m-%d")
     out_dir = os.path.join(OUTPUT_DIR, date_str)
     os.makedirs(out_dir, exist_ok=True)
@@ -55,7 +53,13 @@ def generate_charts(excel_path):
             if df.empty:
                 continue
 
-            safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in sheet).strip("_")
+            safe_name = ""
+            for c in sheet:
+                if c.isalnum() or c in "-_":
+                    safe_name += c
+                else:
+                    safe_name += "_"
+            safe_name = safe_name.strip("_")
             if not safe_name:
                 safe_name = "chart_" + str(len(charts))
             png_path = os.path.join(out_dir, safe_name + ".png")
@@ -63,12 +67,13 @@ def generate_charts(excel_path):
             fig, ax = plt.subplots(figsize=(8, 3.5), dpi=100)
             plotted = False
 
-            # ---------- 启发1：行业分布类（涨停行业分布）----------
+            # 启发1：行业分布类
             if "行业" in sheet or "分布" in sheet:
                 try:
                     cols = [c for c in df.columns if df[c].notna().any()]
                     if len(cols) >= 2:
-                        x_col, y_col = cols[0], cols[1]
+                        x_col = cols[0]
+                        y_col = cols[1]
                         plot_df = df[[x_col, y_col]].dropna().head(15)
                         plot_df[y_col] = pd.to_numeric(plot_df[y_col], errors='coerce')
                         plot_df = plot_df.dropna()
@@ -80,14 +85,13 @@ def generate_charts(excel_path):
                             ax.invert_yaxis()
                             plotted = True
                 except Exception as e:
-                    print(f"[{sheet}] 行业分布绘图失败: {e}")
+                    print("[" + sheet + "] 行业分布绘图失败: " + str(e))
 
-            # ---------- 启发2：宽格式（连板个股、大盘小盘&成长价值）----------
+            # 启发2：宽格式（连板个股、大盘小盘&成长价值）
             if not plotted and (len(df) <= 10 and len(df.columns) > 10):
                 try:
                     idx_col = df.columns[0]
                     df_t = df.set_index(idx_col).T
-                    # 尝试解析索引为日期（Excel序列号或字符串）
                     try:
                         numeric_idx = pd.to_numeric(df_t.index, errors='coerce')
                         df_t.index = pd.to_datetime(numeric_idx, unit='D', origin='1899-12-30', errors='coerce')
@@ -104,20 +108,19 @@ def generate_charts(excel_path):
                             ax.xaxis.set_major_locator(plt.MaxNLocator(10))
                         plotted = True
                 except Exception as e:
-                    print(f"[{sheet}] 宽格式绘图失败: {e}")
+                    print("[" + sheet + "] 宽格式绘图失败: " + str(e))
 
-            # ---------- 启发3：长格式（涨停数量等）----------
+            # 启发3：长格式（涨停数量等）
             if not plotted:
                 date_col = None
                 for col in df.columns:
                     col_str = str(col).lower()
-                    if any(k in col_str for k in ["date", "日期", "时间", "day"]):
+                    if "date" in col_str or "日期" in col_str or "时间" in col_str or "day" in col_str:
                         date_col = col
                         break
 
                 if date_col is not None:
                     try:
-                        # 混合类型日期处理：先尝试Excel序列号，再尝试字符串
                         numeric = pd.to_numeric(df[date_col], errors='coerce')
                         parsed = pd.to_datetime(numeric, unit='D', origin='1899-12-30', errors='coerce')
                         mask = parsed.isna()
@@ -135,14 +138,15 @@ def generate_charts(excel_path):
                                 ax.xaxis.set_major_locator(plt.MaxNLocator(10))
                             plotted = True
                     except Exception as e:
-                        print(f"[{sheet}] 长格式绘图失败: {e}")
+                        print("[" + sheet + "] 长格式绘图失败: " + str(e))
 
-            # ---------- 启发4：兜底——前两列简单画图 ----------
+            # 启发4：兜底——前两列简单画图
             if not plotted:
                 try:
                     cols = [c for c in df.columns if df[c].notna().any()]
                     if len(cols) >= 2:
-                        x_col, y_col = cols[0], cols[1]
+                        x_col = cols[0]
+                        y_col = cols[1]
                         plot_df = df[[x_col, y_col]].dropna().head(20)
                         plot_df[y_col] = pd.to_numeric(plot_df[y_col], errors='coerce')
                         plot_df = plot_df.dropna()
@@ -152,7 +156,7 @@ def generate_charts(excel_path):
                             ax.set_xticklabels([str(v)[:8] for v in plot_df[x_col].values], rotation=45, ha='right', fontsize=7)
                             plotted = True
                 except Exception as e:
-                    print(f"[{sheet}] 兜底绘图失败: {e}")
+                    print("[" + sheet + "] 兜底绘图失败: " + str(e))
 
             if not plotted:
                 ax.text(0.5, 0.5, "数据格式暂不支持自动绘图", ha='center', va='center', transform=ax.transAxes)
@@ -162,24 +166,24 @@ def generate_charts(excel_path):
             fig.savefig(png_path, dpi=100, bbox_inches='tight')
             plt.close(fig)
             charts.append((sheet, safe_name))
-            print(f"已生成图表: {png_path}")
+            print("已生成图表: " + png_path)
 
         except Exception as e:
-            print(f"[{sheet}] Sheet处理异常: {e}")
+            print("[" + sheet + "] Sheet处理异常: " + str(e))
             plt.close('all')
 
     return charts, date_str
 
+
 def git_commit():
-    """把生成的图片提交回仓库，以便生成Raw URL"""
     os.system("git config user.name 'github-actions[bot]'")
     os.system("git config user.email '41898282+github-actions[bot]@users.noreply.github.com'")
     os.system("git add " + OUTPUT_DIR + "/")
     os.system("git commit -m 'daily: auto charts' || echo 'No changes to commit'")
     os.system("git push")
 
+
 def push_message(text_content, charts, date_str):
-    """Pushplus推送：文字 + Markdown图片链接"""
     if not TOKEN:
         print("未设置 PUSHPLUS_TOKEN，跳过推送")
         return
@@ -206,7 +210,7 @@ def push_message(text_content, charts, date_str):
     res = requests.post("http://www.pushplus.plus/send", data=payload, timeout=20)
     print("Pushplus响应:", res.json())
 
-# ==================== 主流程 ====================
+
 if __name__ == "__main__":
     excel = get_latest_file(["xlsx", "xls"])
     text = get_latest_file(["txt", "md", "docx"])
